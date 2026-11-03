@@ -190,13 +190,26 @@ body.auth-on > :not(#authView):not(.toast):not(script) { display: none !importan
 @keyframes spin { to { transform: rotate(360deg); } }
 .ctry-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .ctry-row .cloud-chip { margin-left: auto; }
-.cloud-chip { display: inline-flex; align-items: center; gap: 8px; padding: 5px 10px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); font-size: 12px; }
-.cc-txt { display: grid; line-height: 1.2; }
-.cc-who { font-weight: 600; max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.cc-status { color: var(--muted); font-size: 11px; }
-.cc-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--pos); flex: none; }
+.cloud-chip { position: relative; }
+.cc-btn { display: inline-flex; align-items: center; gap: 9px; padding: 4px 10px 4px 4px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); color: var(--ink); cursor: pointer; font: inherit; }
+.cc-btn:hover, .cc-btn[aria-expanded="true"] { border-color: var(--accent); }
+.cc-avatar, .prof-avatar { width: 30px; height: 30px; border-radius: 50%; background: var(--accent); color: var(--accent-ink); display: grid; place-items: center; font: 600 13px var(--font-display); flex: none; }
+.prof-avatar { width: 44px; height: 44px; font-size: 18px; }
+.prof-top { display: flex; gap: 12px; align-items: center; }
+.cc-txt { display: grid; line-height: 1.2; text-align: left; }
+.cc-who { font-size: 12.5px; font-weight: 600; max-width: 170px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cc-status { color: var(--muted); font-size: 11px; display: inline-flex; align-items: center; gap: 5px; }
+.cc-caret { color: var(--muted); font-size: 11px; }
+.cc-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--pos); flex: none; }
 .cc-dot.pending, .cc-dot.saving { background: var(--amber); }
 .cc-dot.error { background: var(--red); }
+.cc-menu { position: absolute; right: 0; top: calc(100% + 6px); z-index: 60; min-width: 220px; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow-lg); padding: 6px; display: grid; }
+.cc-menu[hidden] { display: none; }
+.cc-menu-head { display: grid; padding: 8px 10px 9px; border-bottom: 1px solid var(--line); margin-bottom: 4px; font-size: 13px; }
+.cc-menu-head span { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; }
+.cc-menu button { text-align: left; border: 0; background: none; padding: 9px 10px; border-radius: 8px; font: inherit; font-size: 13.5px; color: var(--ink); cursor: pointer; }
+.cc-menu button:hover, .cc-menu button:focus-visible { background: var(--gray-soft); }
+.modal.small-modal { max-width: 440px; }
 @media (max-width: 640px) { .cc-who { max-width: 110px; } }
 /* ISA residual cash & contributions */
 .allow-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: stretch; }
@@ -485,7 +498,8 @@ body { transition: background-color .35s ease; }
       <button class="ctry-btn c-uk" data-country="UK" type="button"><span class="cur" aria-hidden="true">£</span>UK Equities</button>
       <button class="ctry-btn c-in" data-country="IN" type="button"><span class="cur" aria-hidden="true">₹</span>Indian Equities</button>
     </div>
-      <div class="cloud-chip" id="cloudChip" hidden><span class="cc-dot" aria-hidden="true"></span><span class="cc-txt"><span class="cc-who"></span><span class="cc-status"></span></span><button class="linkbtn small" data-act="sign-out" type="button">Sign out</button></div>
+      <div class="cloud-chip" id="cloudChip" hidden><button class="cc-btn" id="ccBtn" type="button" aria-haspopup="true" aria-expanded="false"><span class="cc-avatar" aria-hidden="true"></span><span class="cc-txt"><span class="cc-who"></span><span class="cc-status"><span class="cc-dot" aria-hidden="true"></span><span class="cc-stat"></span></span></span><span class="cc-caret" aria-hidden="true">▾</span></button>
+        <div class="cc-menu" id="ccMenu" role="menu" hidden><div class="cc-menu-head"><b class="cc-mname"></b><span class="cc-memail"></span></div><button type="button" role="menuitem" data-act="profile">Your profile…</button><button type="button" role="menuitem" data-act="password">Change password…</button><button type="button" role="menuitem" data-act="sign-out">Sign out</button></div></div>
     </div>
     <nav class="tabs" id="tabs" aria-label="Sections">
       <div class="gtabs">
@@ -2709,7 +2723,9 @@ function doAct(a) {
   if (a === 'xl-export') return xlExport();
   if (a === 'xl-confirm') { if (!pendingImport) return; S = pendingImport; pendingImport = null; UI.acctFilter = 'all'; save(); closeModal(); render(); return toast('Imported ' + plural(S.transactions.length, 'transaction') + ' and ' + plural(S.instruments.length, 'investment')); }
   if (a === 'add-account') return openAccountForm(UI.priceRegion || 'UK');
-  if (a === 'sign-out') return cloudSignOut();
+  if (a === 'sign-out') { toggleAccountMenu(false); return cloudSignOut(); }
+  if (a === 'profile') return openProfileForm();
+  if (a === 'password') { if (modalRoot.innerHTML) closeModal(); return openPasswordForm(); }
   if (a === 'upload-local') {
     let d = null; try { d = JSON.parse(localStorage.getItem(STORE_KEY) || 'null'); } catch (e) {}
     if (!d || !d.accounts) return toast('Nothing to upload from this browser.');
@@ -2914,7 +2930,7 @@ const DB_TABLES = [
 function stateToRows(st, uid) {
   const out = Object.fromEntries(DB_TABLES.map(([t]) => [t, []]));
   const isa = new Set(st.accounts.filter(a => a.type === 'ISA').map(a => a.id));
-  out.profiles.push({ user_id: uid, fx_rates: (st.settings && st.settings.fx) || {}, allowances: (st.settings && st.settings.allowances) || {} });
+  out.profiles.push({ user_id: uid, display_name: (typeof cloud !== 'undefined' && cloud.profile && cloud.profile.display_name) || null, fx_rates: (st.settings && st.settings.fx) || {}, allowances: (st.settings && st.settings.allowances) || {} });
   st.accounts.forEach((a, i) => out.accounts.push({ id: a.id, user_id: uid, region: a.region, type: a.type, name: a.name, provider: a.provider || '', sort_order: i }));
   for (const f of st.folios || []) {
     // folio check: the console stores it on each fund; use the latest one recorded for this folio
@@ -3053,10 +3069,14 @@ function paintCloudChip() {
   el.hidden = !(CLOUD && cloud.user);
   if (el.hidden) return;
   const lab = { idle: 'Saved', saved: 'Saved', pending: 'Saving…', saving: 'Saving…', error: 'Not saved — retrying' }[cloud.state] || '';
+  const name = (cloud.profile && cloud.profile.display_name) || '', email = cloud.user.email || '';
   el.querySelector('.cc-dot').className = 'cc-dot ' + cloud.state;
-  el.querySelector('.cc-status').textContent = lab;
+  el.querySelector('.cc-stat').textContent = lab;
   el.querySelector('.cc-status').title = cloud.err || '';
-  el.querySelector('.cc-who').textContent = cloud.user.email || '';
+  el.querySelector('.cc-who').textContent = name || email;
+  el.querySelector('.cc-avatar').textContent = ((name || email).trim()[0] || '?').toUpperCase();
+  el.querySelector('.cc-mname').textContent = name || 'Your account';
+  el.querySelector('.cc-memail').textContent = email;
 }
 
 /* ── Sign-in screens ── */
@@ -3126,6 +3146,7 @@ async function startSession(session) {
     let uploaded = null; try { uploaded = localStorage.getItem(STORE_KEY + '.uploaded'); } catch (e) {}
     UI.offerLocal = empty && !uploaded && local && !local.sample && Array.isArray(local.transactions) && local.transactions.length > 0 ? local.transactions.length : 0;
     cloud.synced = snapshotOf(Object.fromEntries(DB_TABLES.map(([t]) => [t, []])));
+    cloud.profile = rows.profiles[0] || { display_name: '' };
     if (empty) { S = emptyState(); S.settings = { ...S.settings }; }
     else { S = rowsToState(rows); cloud.synced = snapshotOf(stateToRows(S, cloud.user.id)); }
     ensureUuids(S);
@@ -3160,6 +3181,76 @@ async function cloudBoot() {
   if (data.session) return startSession(data.session);
   authView('signin');
 }
+/* ── Account menu, profile and password ── */
+function toggleAccountMenu(open) {
+  const m = $id('ccMenu'), b = $id('ccBtn'); if (!m) return;
+  open = open ?? m.hidden; m.hidden = !open; b.setAttribute('aria-expanded', String(open));
+}
+document.addEventListener('click', e => {
+  if (e.target.closest('#ccBtn')) return toggleAccountMenu();
+  if (!e.target.closest('#ccMenu')) toggleAccountMenu(false);
+});
+document.addEventListener('keydown', e => { if (e.key === 'Escape') toggleAccountMenu(false); });
+function openProfileForm() {
+  toggleAccountMenu(false);
+  const name = (cloud.profile && cloud.profile.display_name) || '';
+  openModal(`<form class="modal small-modal" id="profForm" role="dialog" aria-modal="true" aria-labelledby="profTitle" novalidate>
+    <div class="modal-head"><h3 id="profTitle">Your profile</h3><button class="x" data-close aria-label="Close" type="button">×</button></div>
+    <div class="modal-body">
+      <div class="prof-top"><span class="prof-avatar" aria-hidden="true">${esc(((name || cloud.user.email || '?').trim()[0] || '?').toUpperCase())}</span><div><b>${esc(name || 'Add your name')}</b><div class="small muted">${esc(cloud.user.email || '')}</div></div></div>
+      <label class="f">Name<input class="in" id="profName" value="${esc(name)}" maxlength="80" autocomplete="name" placeholder="How you'd like to be shown"></label>
+      <label class="f">Email<input class="in" value="${esc(cloud.user.email || '')}" disabled></label>
+      <div class="small muted">Your email is your sign-in and can't be changed here. To use a different email, ask the dashboard owner to invite it.</div>
+      <div class="toolbar"><button class="btn ghost sm" type="button" data-act="password">Change password…</button></div>
+      <div class="err" id="profErr" role="alert"></div>
+    </div>
+    <div class="modal-foot"><button class="btn ghost" type="button" data-close>Cancel</button><button class="btn primary" type="submit">Save</button></div>
+  </form>`);
+  $id('profForm').addEventListener('submit', async e => {
+    e.preventDefault();
+    const v = $id('profName').value.trim().replace(/\s+/g, ' ');
+    const btn = e.target.querySelector('.btn.primary'); btn.disabled = true;
+    const { error } = await cloud.sb.from('profiles').update({ display_name: v || null }).eq('user_id', cloud.user.id);
+    btn.disabled = false;
+    if (error) return $id('profErr').textContent = 'Couldn’t save: ' + error.message;
+    cloud.profile = { ...(cloud.profile || {}), display_name: v };
+    paintCloudChip(); closeModal(); toast('Profile saved');
+  });
+  setTimeout(() => $id('profName').focus(), 30);
+}
+function openPasswordForm() {
+  toggleAccountMenu(false);
+  openModal(`<form class="modal small-modal" id="pwForm" role="dialog" aria-modal="true" aria-labelledby="pwTitle" novalidate>
+    <div class="modal-head"><h3 id="pwTitle">Change password</h3><button class="x" data-close aria-label="Close" type="button">×</button></div>
+    <div class="modal-body">
+      <input type="text" autocomplete="username" value="${esc(cloud.user.email || '')}" hidden>
+      <label class="f">Current password<input class="in pw" id="pwCur" type="password" autocomplete="current-password" required></label>
+      <label class="f">New password <span class="small muted" style="font-weight:400">at least 8 characters</span><input class="in pw" id="pwNew" type="password" autocomplete="new-password" minlength="8" required></label>
+      <label class="f">Confirm new password<input class="in pw" id="pwNew2" type="password" autocomplete="new-password" minlength="8" required></label>
+      <label class="check"><input type="checkbox" id="pwShow"><span>Show passwords</span></label>
+      <div class="err" id="pwErr" role="alert"></div>
+    </div>
+    <div class="modal-foot"><button class="btn ghost" type="button" data-close>Cancel</button><button class="btn primary" type="submit">Update password</button></div>
+  </form>`);
+  $id('pwShow').addEventListener('change', e => document.querySelectorAll('#pwForm .pw').forEach(i => i.type = e.target.checked ? 'text' : 'password'));
+  $id('pwForm').addEventListener('submit', async e => {
+    e.preventDefault();
+    const err = m => { $id('pwErr').textContent = m; }, cur = $id('pwCur').value, a = $id('pwNew').value, b = $id('pwNew2').value;
+    if (!cur) return err('Enter your current password.');
+    if (a.length < 8) return err('The new password needs at least 8 characters.');
+    if (a !== b) return err('The new passwords don’t match.');
+    if (a === cur) return err('Choose a password different from your current one.');
+    const btn = e.target.querySelector('.btn.primary'); btn.disabled = true;
+    const chk = await cloud.sb.auth.signInWithPassword({ email: cloud.user.email, password: cur });
+    if (chk.error) { btn.disabled = false; return err('Your current password isn’t right.'); }
+    const { error } = await cloud.sb.auth.updateUser({ password: a });
+    btn.disabled = false;
+    if (error) return err(error.message);
+    closeModal(); toast('Password updated');
+  });
+  setTimeout(() => $id('pwCur').focus(), 30);
+}
+
 async function cloudSignOut() {
   if (cloud.state === 'pending' || cloud.state === 'saving') { clearTimeout(cloud.timer); await syncNow(); }
   if (cloud.state === 'error' && !confirm('Some changes haven’t been saved yet. Sign out anyway?')) return;
