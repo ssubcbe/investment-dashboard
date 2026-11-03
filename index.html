@@ -170,6 +170,34 @@ textarea.in { height: auto; padding: 8px 10px; resize: vertical; }
 .ni-look { margin: -4px 0 2px; padding: 7px 10px; border-radius: 8px; background: var(--gray-soft); color: var(--ink); line-height: 1.45; }
 .ni-look.ok { background: var(--pos-soft); }
 .ni-look.muted { color: var(--muted); }
+/* Sign-in & cloud status */
+body.auth-on > :not(#authView):not(.toast):not(script) { display: none !important; }
+#authView { min-height: 100vh; display: grid; place-items: center; padding: 24px 16px; background: var(--bg); }
+.auth-card { width: min(400px, 100%); background: var(--surface); border: 1px solid var(--line); border-radius: 16px; box-shadow: var(--shadow-lg); padding: 28px 26px 22px; display: grid; gap: 14px; }
+.auth-brand { text-align: center; display: grid; gap: 4px; margin-bottom: 4px; }
+.auth-brand h1 { font: 600 19px var(--font-display); margin: 6px 0 0; }
+.auth-brand p { margin: 0; font-size: 12px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+.auth-mark { width: 48px; height: 48px; margin: 0 auto; border-radius: 14px; display: grid; place-items: center; background: var(--accent); color: var(--accent-ink); font: 600 17px var(--font-display); letter-spacing: -.02em; }
+.auth-h { font: 600 16px var(--font-display); margin: 4px 0 -8px; }
+.auth-go { height: 42px; font-size: 14.5px; }
+.auth-go.busy { opacity: .6; }
+.auth-msg { font-size: 13px; padding: 9px 12px; border-radius: 8px; background: var(--red-soft); color: var(--red); }
+.auth-msg.ok { background: var(--pos-soft); color: var(--pos); }
+.auth-foot { margin: 2px 0 0; text-align: center; }
+.auth-card .linkbtn { justify-self: center; }
+.auth-loading { display: flex; gap: 10px; align-items: center; justify-content: center; color: var(--muted); font-size: 14px; padding: 14px 0 6px; }
+.spin { width: 16px; height: 16px; border-radius: 50%; border: 2px solid var(--line-strong); border-top-color: var(--accent); animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.ctry-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.ctry-row .cloud-chip { margin-left: auto; }
+.cloud-chip { display: inline-flex; align-items: center; gap: 8px; padding: 5px 10px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); font-size: 12px; }
+.cc-txt { display: grid; line-height: 1.2; }
+.cc-who { font-weight: 600; max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cc-status { color: var(--muted); font-size: 11px; }
+.cc-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--pos); flex: none; }
+.cc-dot.pending, .cc-dot.saving { background: var(--amber); }
+.cc-dot.error { background: var(--red); }
+@media (max-width: 640px) { .cc-who { max-width: 110px; } }
 /* ISA residual cash & contributions */
 .allow-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: stretch; }
 @media (max-width: 900px) { .allow-3 { grid-template-columns: 1fr; } }
@@ -452,9 +480,12 @@ body { transition: background-color .35s ease; }
       <button class="btn ghost" id="tourBtn" type="button">Take the tour</button>
       <button class="btn primary" id="newTxBtn" type="button">+ New transaction</button>
     </div>
+    <div class="ctry-row">
     <div class="ctry" id="ctrySwitch" role="group" aria-label="Country">
       <button class="ctry-btn c-uk" data-country="UK" type="button"><span class="cur" aria-hidden="true">£</span>UK Equities</button>
       <button class="ctry-btn c-in" data-country="IN" type="button"><span class="cur" aria-hidden="true">₹</span>Indian Equities</button>
+    </div>
+      <div class="cloud-chip" id="cloudChip" hidden><span class="cc-dot" aria-hidden="true"></span><span class="cc-txt"><span class="cc-who"></span><span class="cc-status"></span></span><button class="linkbtn small" data-act="sign-out" type="button">Sign out</button></div>
     </div>
     <nav class="tabs" id="tabs" aria-label="Sections">
       <div class="gtabs">
@@ -549,6 +580,7 @@ function buildBook(state, today) {
     const m = new Map();
     for (const t of state.transactions) if (t.instrumentId === ins.id && (t.type === 'BUY' || t.type === 'SELL') && t.price > 0) m.set(t.date, t.price);
     if (ins.sample) for (const [d, p] of synthSeries(ins.sample, ins.region, today)) m.set(d, p);
+    if (MARKET.size) for (const [d, p] of marketSeries(ins)) if (!m.has(d)) m.set(d, p);
     for (const [d, p] of (ins.prices || [])) m.set(d, p);
     book.set(ins.id, [...m.entries()].filter(e => e[0] <= today).sort((a, b) => a[0] < b[0] ? -1 : 1));
   }
@@ -866,12 +898,22 @@ function buildSample(today) {
   return state;
 }
 
+/* ───────── Supabase (sign-in + saving). Leave both empty to run as a single-browser prototype. ───────── */
+const SUPABASE_URL = 'https://mmnoyedccakxybihbugp.supabase.co';   // e.g. 'https://abcdxyz.supabase.co'   (Project Settings → API → Project URL)
+const SUPABASE_KEY = 'sb_publishable_gFvLb2hgNEIyttJamDLC4A_4CbcX-V6';   // the anon / publishable key — safe to publish. NEVER the service_role / secret key.
+const CLOUD = !!(SUPABASE_URL && SUPABASE_KEY);
+const MARKET = new Map();   // nightly closes from Supabase: "KIND|SYMBOL|CCY" → [[date, close]]
+
 /* ───────── App state ───────── */
 const STORE_KEY = 'sterling-rupee.v1';
 const TODAY = D.today();
 let S;
-try { const raw = localStorage.getItem(STORE_KEY); S = raw ? JSON.parse(raw) : null; } catch (e) { S = null; }
-if (!S || !S.accounts || (S.sample && S.sv !== 8)) S = buildSample(TODAY);
+if (CLOUD) S = null;   // filled after sign-in (cloudBoot)
+else {
+  try { const raw = localStorage.getItem(STORE_KEY); S = raw ? JSON.parse(raw) : null; } catch (e) { S = null; }
+  if (!S || !S.accounts || (S.sample && S.sv !== 8)) S = buildSample(TODAY);
+}
+if (!S) S = { version: 1, sample: false, accounts: [], instruments: [], folios: [], amcInfo: {}, declared: [], transactions: [], settings: { fx: { USD: 0.75, EUR: 0.86 }, allowances: { default: { isa: 20000, lisa: 4000 } } }, seq: 0 };
 S.declared = S.declared || [];
 S.folios = S.folios || [];
 S.amcInfo = S.amcInfo || {};
@@ -880,6 +922,7 @@ try { Object.assign(UI, JSON.parse(localStorage.getItem(STORE_KEY + '.ui') || '{
 if (!UI.country) UI.country = UI.dashRegion === 'IN' ? 'IN' : 'UK';
 let BOOK = buildBook(S, TODAY);
 function save() {
+  if (CLOUD) { ensureUuids(S); BOOK = buildBook(S, TODAY); return scheduleSync(); }
   BOOK = buildBook(S, TODAY);
   try { localStorage.setItem(STORE_KEY, JSON.stringify(S)); } catch (e) {}
 }
@@ -979,7 +1022,7 @@ function render() {
   document.querySelectorAll('.tab').forEach(b => { const on = b.dataset.tab === UI.tab; b.setAttribute('aria-selected', String(on)); if (on) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current'); });
   const act = document.querySelector('.tab[aria-current]'), nav = document.getElementById('tabs');
   if (act && nav.scrollWidth > nav.clientWidth) { const a = act.getBoundingClientRect(), n = nav.getBoundingClientRect(); if (a.left < n.left) nav.scrollLeft += a.left - n.left - 12; else if (a.right > n.right) nav.scrollLeft += a.right - n.right + 12; }
-  const banner = S.sample ? `<div class="banner"><div class="grow"><b>Sample portfolio.</b> Figures and prices are simulated so you can try every feature. Nothing here is your data.</div><button class="btn sm ghost" data-act="start-fresh" type="button">Clear sample and start mine</button></div>` : '';
+  const banner = CLOUD && UI.offerLocal ? `<div class="banner"><div class="grow"><b>Your dashboard is empty.</b> This browser still holds ${plural(UI.offerLocal, 'transaction')} from the earlier version. Upload them to your account, or import an Excel file from Prices &amp; data.</div><button class="btn sm primary" data-act="upload-local" type="button">Upload from this browser</button></div>` : S.sample ? `<div class="banner"><div class="grow"><b>Sample portfolio.</b> Figures and prices are simulated so you can try every feature. Nothing here is your data.</div><button class="btn sm ghost" data-act="start-fresh" type="button">Clear sample and start mine</button></div>` : '';
   const views = { overview: viewOverview, holdings: viewHoldings, folios: viewFolios, console: viewConsole, dividends: viewDividends, transactions: viewTransactions, weekly: viewWeekly, allowances: viewAllowances, prices: viewPrices };
   main.innerHTML = banner + `<div class="page-eyebrow">${UI.country === 'IN' ? 'Indian Equities' : 'UK Equities'}</div>` + (views[UI.tab] || viewOverview)();
   afterRender[UI.tab] && afterRender[UI.tab]();
@@ -1923,9 +1966,9 @@ function viewPrices() {
     <div class="small" id="xlMsg" role="status"></div>
   </section>
   <section class="card pad"><h3 style="font-size:16px">Your data</h3>
-    <div class="small muted">Everything is saved in this browser only. Copy the backup text and keep it somewhere safe, or paste one back in. This same file will import straight into the Supabase version later.</div>
+    <div class="small muted">${CLOUD ? 'Everything is saved to your account and is private to you. Export to Excel now and then for your own copy.' : 'Everything is saved in this browser only. Copy the backup text and keep it somewhere safe, or paste one back in. This same file will import straight into the Supabase version later.'}</div>
     <textarea class="in" id="dataBox" rows="5" placeholder="Paste a backup here to restore it" spellcheck="false"></textarea>
-    <div class="toolbar"><button class="btn ghost" data-act="xl-export" type="button">Export to Excel</button><button class="btn ghost" data-act="export" type="button">Show backup text</button><button class="btn ghost" data-act="copy" type="button">Copy</button><button class="btn ghost" data-act="import" type="button">Restore from pasted text</button><label class="btn ghost" for="fileIn">Restore from file</label><input id="fileIn" type="file" accept=".json,application/json" hidden><span style="margin-left:auto"></span><button class="btn ghost" data-act="reset-sample" type="button">Load sample portfolio</button><button class="btn ghost danger ${UI.armed === 'wipe' ? 'armed' : ''}" data-act="wipe" type="button">${UI.armed === 'wipe' ? 'Confirm: erase everything' : 'Erase all data'}</button></div>
+    <div class="toolbar"><button class="btn ghost" data-act="xl-export" type="button">Export to Excel</button><button class="btn ghost" data-act="export" type="button">Show backup text</button><button class="btn ghost" data-act="copy" type="button">Copy</button><button class="btn ghost" data-act="import" type="button">Restore from pasted text</button><label class="btn ghost" for="fileIn">Restore from file</label><input id="fileIn" type="file" accept=".json,application/json" hidden><span style="margin-left:auto"></span>${CLOUD ? '' : '<button class="btn ghost" data-act="reset-sample" type="button">Load sample portfolio</button>'}<button class="btn ghost danger ${UI.armed === 'wipe' ? 'armed' : ''}" data-act="wipe" type="button">${UI.armed === 'wipe' ? 'Confirm: erase everything' : 'Erase all data'}</button></div>
   </section>`;
 }
 
@@ -2201,7 +2244,7 @@ async function xlImport(file) {
         ${res.counts ? `<div class="stat-grid">${res.counts.map(([k, v]) => `<div><span class="k">${k}</span><span class="v">${v}</span></div>`).join('')}</div>` : ''}
         ${res.errors.length ? `<div><b class="neg">${plural(res.errors.length, 'problem')} to fix</b>${list(res.errors, 'err')}</div>` : ''}
         ${res.warnings.length ? `<div><b style="color:var(--amber)">${plural(res.warnings.length, 'note')}</b>${list(res.warnings, '')}</div>` : ''}
-        ${res.errors.length ? '<div class="small muted">Correct the rows in Excel and choose the file again. Nothing has changed.</div>' : '<div class="note-box"><b>Importing replaces all current data</b> in this browser (including the sample portfolio). Export to Excel or copy a backup first if you want to keep it.</div>'}
+        ${res.errors.length ? '<div class="small muted">Correct the rows in Excel and choose the file again. Nothing has changed.</div>' : '<div class="note-box"><b>Importing replaces all current data</b> ' + (CLOUD ? 'in your account' : 'in this browser (including the sample portfolio)') + '. Export to Excel or copy a backup first if you want to keep it.</div>'}
       </div>
       <div class="modal-foot"><button class="btn ghost" type="button" data-close>${res.errors.length ? 'Close' : 'Cancel'}</button>${res.errors.length ? '' : '<button class="btn primary" type="button" data-act="xl-confirm">Replace my data with this file</button>'}</div>
     </div>`);
@@ -2510,7 +2553,7 @@ function openTxForm(pre) {
     }
     if (newFolio) S.folios.push(newFolio);
     if (newIns) S.instruments.push(newIns);
-    if (type === 'BUY' && !$('topUpL').hidden && $('txTopUp').checked && topUpAmt > 0) S.transactions.push({ id: 't' + Date.now().toString(36) + 'c', seq: t.seq - 0.5, type: 'CASH', dir: 'IN', accountId: acc.id, instrumentId: '', date, amount: Math.round(topUpAmt * 100) / 100, newMoney: true, note: 'Paid in for a purchase' });
+    if (type === 'BUY' && !$('topUpL').hidden && $('txTopUp').checked && topUpAmt > 0) { const cashSeq = t.seq; t.seq = S.seq = (S.seq || 0) + 1; S.transactions.push({ id: 't' + Date.now().toString(36) + 'c', seq: cashSeq, type: 'CASH', dir: 'IN', accountId: acc.id, instrumentId: '', date, amount: Math.round(topUpAmt * 100) / 100, newMoney: true, note: 'Paid in for a purchase' }); }
     if (editing) S.transactions[S.transactions.indexOf(editing)] = t; else S.transactions.push(t);
     save(); closeModal(); render();
     toast(editing ? 'Transaction updated' : copyOf ? 'Copy added for ' + fdate(date) : { BUY: 'Purchase added', SELL: 'Sale recorded', TRANSFER: 'Transfer recorded', INCOME: (KINDS[t.kind] || 'Income') + ' added' }[type]);
@@ -2666,6 +2709,13 @@ function doAct(a) {
   if (a === 'xl-export') return xlExport();
   if (a === 'xl-confirm') { if (!pendingImport) return; S = pendingImport; pendingImport = null; UI.acctFilter = 'all'; save(); closeModal(); render(); return toast('Imported ' + plural(S.transactions.length, 'transaction') + ' and ' + plural(S.instruments.length, 'investment')); }
   if (a === 'add-account') return openAccountForm(UI.priceRegion || 'UK');
+  if (a === 'sign-out') return cloudSignOut();
+  if (a === 'upload-local') {
+    let d = null; try { d = JSON.parse(localStorage.getItem(STORE_KEY) || 'null'); } catch (e) {}
+    if (!d || !d.accounts) return toast('Nothing to upload from this browser.');
+    d.folios = d.folios || []; d.amcInfo = d.amcInfo || {}; d.declared = d.declared || []; d.settings = d.settings || S.settings; d.sample = false;
+    S = d; UI.offerLocal = 0; try { localStorage.setItem(STORE_KEY + '.uploaded', cloud.user.id); } catch (e) {} save(); render(); return toast('Uploading ' + plural(S.transactions.length, 'transaction') + ' to your account…');
+  }
   if (a === 'start-fresh') { S = emptyState(); save(); render(); return toast('Sample cleared. Add your first transaction.'); }
   if (a === 'reset-sample') { S = buildSample(TODAY); save(); render(); return toast('Sample portfolio loaded'); }
   if (a === 'wipe') { if (UI.armed !== 'wipe') { UI.armed = 'wipe'; return render(); } UI.armed = null; S = emptyState(); save(); render(); return toast('All data erased'); }
@@ -2724,7 +2774,7 @@ const TOUR = [
   { sel: () => document.querySelector('main .vlegend') || document.querySelector('main .toolbar'), tab: 'folios', country: 'IN', title: 'AMC Console · Indian Equities',
     text: 'Back in <b>Indian Equities</b>. Mutual funds are grouped by fund house and folio, and two circles before each AMC show <b>KYC</b> and <b>Nominee</b> status: green when verified, red once a check is over two years old.' },
   { sel: () => document.querySelector('[data-act="export"]')?.closest('section'), tab: 'prices', country: 'IN', title: 'Keep a backup',
-    text: 'Your data stays in this browser. <b>Export to Excel</b> or copy a backup now and then. Replay this tour any time with <b>Take the tour</b>. Enjoy!' },
+    get text() { return (CLOUD ? 'Your data is saved to your account and only you can see it. <b>Export to Excel</b> now and then for your own copy.' : 'Your data stays in this browser. <b>Export to Excel</b> or copy a backup now and then.') + ' Replay this tour any time with <b>Take the tour</b>. Enjoy!'; } },
 ];
 const TOUR_KEY = 'sterling-rupee.tour.v1';
 const tour = { i: 0, prev: null, el: null };
@@ -2821,8 +2871,306 @@ document.getElementById('tourBtn').addEventListener('click', startTour);
 const h0 = (location.hash || '').slice(1), h = h0 === 'console' ? 'folios' : h0;
 if (['overview', 'holdings', 'folios', 'console', 'dividends', 'transactions', 'weekly', 'allowances', 'prices'].includes(h)) UI.tab = h;
 if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => charts.length && render());
-render();
-try { if (!localStorage.getItem(TOUR_KEY)) setTimeout(startTour, 700); } catch (e) {}
+/* ═════════════════════════ Cloud: Supabase sign-in and saving ═════════════════════════
+   The app keeps working on the in-memory state S exactly as before. Every save() schedules a sync that
+   compares S with what was last saved and sends only the rows that changed (upsert) or disappeared (delete). */
+function marketKey(ins) {
+  const t = String(ins.ticker || '').trim().toUpperCase(); if (!t || ins.fixedPrice) return null;
+  if (ins.region === 'IN' && ins.type === 'Mutual fund') return 'AMFI|' + t.replace(/^AMFI\s*/, '');
+  if (/^[A-Z]{2}[A-Z0-9]{9}\d$/.test(t)) return 'ISIN|' + t;
+  return 'TICKER|' + t;
+}
+function marketSeries(ins) { const k = marketKey(ins); return (k && MARKET.get(k + '|' + ins.ccy)) || []; }
+
+const cloud = { sb: null, user: null, synced: null, timer: 0, busy: false, again: false, state: 'idle', err: '', retry: 0, ready: false };
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const newId = () => (crypto.randomUUID ? crypto.randomUUID() : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => { const r = Math.random() * 16 | 0; return (c === 'x' ? r : (r & 3 | 8)).toString(16); }));
+
+/* Give every account, folio, investment, transaction and declared dividend a database id (uuid), updating references */
+function ensureUuids(st) {
+  const remap = (list, refs) => { const m = new Map(); for (const x of list || []) if (!UUID_RE.test(String(x.id))) { const n = newId(); m.set(x.id, n); x.id = n; } return m; };
+  const acc = remap(st.accounts), fol = remap(st.folios), ins = remap(st.instruments);
+  remap(st.transactions); remap(st.declared);
+  if (!acc.size && !fol.size && !ins.size) return;
+  for (const i of st.instruments) if (i.folioId && fol.has(i.folioId)) i.folioId = fol.get(i.folioId);
+  for (const t of st.transactions) { if (acc.has(t.accountId)) t.accountId = acc.get(t.accountId); if (t.toAccountId && acc.has(t.toAccountId)) t.toAccountId = acc.get(t.toAccountId); if (t.instrumentId && ins.has(t.instrumentId)) t.instrumentId = ins.get(t.instrumentId); }
+  for (const d of st.declared || []) if (ins.has(d.instrumentId)) d.instrumentId = ins.get(d.instrumentId);
+}
+
+/* ── State ⇄ database rows ── */
+const nn = v => (v === '' || v === undefined || v === null || (typeof v === 'number' && !isFinite(v))) ? null : v;
+const yn = v => (v === 'Y' || v === 'N') ? v : null;
+const DB_TABLES = [
+  // [table, key(row), conflict columns for upsert, delete filter(row)]
+  ['profiles', r => r.user_id, 'user_id', null],
+  ['accounts', r => r.id, 'id', r => ({ id: r.id })],
+  ['folios', r => r.id, 'id', r => ({ id: r.id })],
+  ['amc_checks', r => r.amc, 'user_id,amc', r => ({ amc: r.amc })],
+  ['instruments', r => r.id, 'id', r => ({ id: r.id })],
+  ['instrument_prices', r => r.instrument_id + '|' + r.price_date, 'instrument_id,price_date', r => ({ instrument_id: r.instrument_id, price_date: r.price_date })],
+  ['declared_dividends', r => r.id, 'id', r => ({ id: r.id })],
+  ['transactions', r => r.id, 'id', r => ({ id: r.id })],
+];
+function stateToRows(st, uid) {
+  const out = Object.fromEntries(DB_TABLES.map(([t]) => [t, []]));
+  const isa = new Set(st.accounts.filter(a => a.type === 'ISA').map(a => a.id));
+  out.profiles.push({ user_id: uid, fx_rates: (st.settings && st.settings.fx) || {}, allowances: (st.settings && st.settings.allowances) || {} });
+  st.accounts.forEach((a, i) => out.accounts.push({ id: a.id, user_id: uid, region: a.region, type: a.type, name: a.name, provider: a.provider || '', sort_order: i }));
+  for (const f of st.folios || []) {
+    // folio check: the console stores it on each fund; use the latest one recorded for this folio
+    const c = [f.check || {}, ...st.instruments.filter(i => i.folioId === f.id).map(i => i.folioCheck || {})].filter(x => x.v).sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')))[0] || {};
+    out.folios.push({ id: f.id, user_id: uid, amc: f.amc, number: String(f.number), holder: f.holder || '', notes: f.notes || '', verified: yn(c.v), verified_on: nn(c.date) });
+  }
+  for (const [amc, v] of Object.entries(st.amcInfo || {})) if (amc) out.amc_checks.push({ user_id: uid, amc, kyc: yn(v.kyc), kyc_on: nn(v.kycDate), nominee: yn(v.nominee), nominee_on: nn(v.nomineeDate) });
+  for (const i of st.instruments) {
+    const IN = i.region === 'IN';
+    out.instruments.push({ id: i.id, user_id: uid, region: i.region, type: i.type, name: i.name, ticker: IN && i.type === 'Mutual fund' ? String(i.ticker || '').replace(/^AMFI\s*/i, '') : (i.ticker || ''), ccy: i.ccy,
+      fixed_price: nn(i.fixedPrice), exchange: IN && i.type === 'Stock' ? (i.exchange || 'NSE') : null, platform: IN ? (i.platform || '') : '', nri: IN ? (i.nri || nriOf(i) || null) : null,
+      folio_id: IN && i.folioId ? i.folioId : null, amc: IN ? (i.amc || '') : '' });
+    for (const [d, p] of i.prices || []) out.instrument_prices.push({ instrument_id: i.id, user_id: uid, price_date: d, close: p });
+  }
+  for (const d of st.declared || []) out.declared_dividends.push({ id: d.id, user_id: uid, instrument_id: d.instrumentId, ex_date: nn(d.exDate), pay_date: d.payDate, per_unit: d.perUnit, ccy: d.ccy });
+  for (const t of st.transactions) {
+    if (t.type === 'CASH' && !isa.has(t.accountId)) continue;   // Lifetime ISA cash isn't kept (not tracked)
+    const trade = t.type === 'BUY' || t.type === 'SELL';
+    out.transactions.push({ id: t.id, user_id: uid, account_id: t.accountId, instrument_id: t.type === 'CASH' ? null : t.instrumentId, type: t.type, trade_date: t.date, seq: Math.round(t.seq || 0),
+      units: t.type === 'INCOME' || t.type === 'CASH' ? null : nn(t.units), price: trade ? nn(t.price) : null, fees: trade ? (+t.fees || 0) : 0, fx: trade ? (+t.fx || 1) : 1,
+      amount: t.type === 'INCOME' || t.type === 'CASH' ? nn(t.amount) : null, income_kind: t.type === 'INCOME' ? (t.kind || 'OTHER') : null,
+      to_account_id: t.type === 'TRANSFER' ? nn(t.toAccountId) : null,
+      new_money: (t.type === 'BUY' || (t.type === 'CASH' && t.dir !== 'OUT')) && typeof t.newMoney === 'boolean' ? t.newMoney : null,
+      cash_dir: t.type === 'CASH' ? (t.dir === 'OUT' ? 'OUT' : 'IN') : null, note: t.note || '' });
+  }
+  return out;
+}
+function rowsToState(r) {
+  const prices = new Map(); for (const p of r.instrument_prices) { if (!prices.has(p.instrument_id)) prices.set(p.instrument_id, []); prices.get(p.instrument_id).push([p.price_date, +p.close]); }
+  const folios = r.folios.map(f => ({ id: f.id, amc: f.amc, number: f.number, holder: f.holder || '', notes: f.notes || '', check: { v: f.verified || '', date: f.verified_on || '' } }));
+  const fcheck = new Map(folios.map(f => [f.id, f.check]));
+  const prof = r.profiles[0] || {};
+  const st = {
+    version: 1, sample: false,
+    accounts: r.accounts.slice().sort((a, b) => a.sort_order - b.sort_order).map(a => ({ id: a.id, region: a.region, type: a.type, name: a.name, provider: a.provider || '' })),
+    folios,
+    amcInfo: Object.fromEntries(r.amc_checks.map(c => [c.amc, { kyc: c.kyc || '', kycDate: c.kyc_on || '', nominee: c.nominee || '', nomineeDate: c.nominee_on || '' }])),
+    instruments: r.instruments.map(i => ({ id: i.id, region: i.region, type: i.type, name: i.name, ticker: i.ticker || '', ccy: i.ccy, prices: (prices.get(i.id) || []).sort((a, b) => a[0] < b[0] ? -1 : 1),
+      ...(i.fixed_price != null ? { fixedPrice: +i.fixed_price } : {}), ...(i.exchange ? { exchange: i.exchange } : {}), ...(i.region === 'IN' ? { platform: i.platform || '', nri: i.nri || '' } : {}),
+      ...(i.folio_id ? { folioId: i.folio_id, folioCheck: { ...fcheck.get(i.folio_id) } } : {}), ...(i.amc ? { amc: i.amc } : {}) })),
+    declared: r.declared_dividends.map(d => ({ id: d.id, instrumentId: d.instrument_id, exDate: d.ex_date || '', payDate: d.pay_date, perUnit: +d.per_unit, ccy: d.ccy })),
+    transactions: r.transactions.map(t => {
+      const x = { id: t.id, seq: +t.seq, type: t.type, date: t.trade_date, accountId: t.account_id, instrumentId: t.instrument_id || '', note: t.note || '' };
+      if (t.type === 'BUY' || t.type === 'SELL') Object.assign(x, { units: +t.units, price: +t.price, fees: +t.fees || 0, fx: +t.fx || 1 });
+      if (t.type === 'TRANSFER') Object.assign(x, { units: +t.units, toAccountId: t.to_account_id || '' });
+      if (t.type === 'INCOME') Object.assign(x, { amount: +t.amount, kind: t.income_kind });
+      if (t.type === 'CASH') Object.assign(x, { amount: +t.amount, dir: t.cash_dir });
+      if (t.new_money !== null && t.new_money !== undefined) x.newMoney = t.new_money;
+      return x;
+    }).sort(cmpTx),
+    settings: { fx: prof.fx_rates || { USD: 0.75, EUR: 0.86 }, allowances: prof.allowances || { default: { isa: 20000, lisa: 4000 } } },
+  };
+  st.seq = st.transactions.reduce((m, t) => Math.max(m, t.seq || 0), 0);
+  return st;
+}
+function snapshotOf(rows) { const m = new Map(); for (const [t, key] of DB_TABLES) m.set(t, new Map(rows[t].map(r => [key(r), JSON.stringify(r)]))); return m; }
+
+/* ── Loading ── */
+async function fetchAll(table, order) {
+  const out = []; const size = 1000;
+  for (let from = 0; ; from += size) {
+    let q = cloud.sb.from(table).select('*').range(from, from + size - 1); if (order) q = q.order(order);
+    const { data, error } = await q; if (error) throw error;
+    out.push(...data); if (data.length < size) break;
+  }
+  return out;
+}
+async function loadCloud() {
+  const names = DB_TABLES.map(([t]) => t);
+  const res = await Promise.all(names.map(t => fetchAll(t, t === 'transactions' ? 'seq' : null)));
+  const rows = Object.fromEntries(names.map((t, i) => [t, res[i]]));
+  return rows;
+}
+async function loadMarket() {
+  MARKET.clear();
+  const keys = [...new Set(S.instruments.map(i => { const k = marketKey(i); return k ? k : null; }).filter(Boolean))]; if (!keys.length) return;
+  const since = D.add(TODAY, -800), byKind = {};
+  for (const k of keys) { const [kind, sym] = k.split('|'); (byKind[kind] = byKind[kind] || []).push(sym); }
+  for (const [kind, syms] of Object.entries(byKind)) {
+    for (let i = 0; i < syms.length; i += 100) {
+      let from = 0;
+      for (;;) {
+        const { data, error } = await cloud.sb.from('market_prices').select('symbol_kind,symbol,price_date,close,ccy').eq('symbol_kind', kind).in('symbol', syms.slice(i, i + 100)).gte('price_date', since).order('price_date').range(from, from + 999);
+        if (error) return;
+        for (const p of data) {
+          for (const ccy of ['GBP', 'GBX', 'USD', 'EUR', 'INR']) {
+            let v = +p.close; if (p.ccy === ccy) {} else if (p.ccy === 'GBP' && ccy === 'GBX') v *= 100; else if (p.ccy === 'GBX' && ccy === 'GBP') v /= 100; else continue;
+            const mk = `${p.symbol_kind}|${p.symbol}|${ccy}`; if (!MARKET.has(mk)) MARKET.set(mk, []); MARKET.get(mk).push([p.price_date, v]);
+          }
+        }
+        if (data.length < 1000) break; from += 1000;
+      }
+    }
+  }
+}
+
+/* ── Saving ── */
+function setSync(state, err) { cloud.state = state; cloud.err = err || ''; paintCloudChip(); }
+function scheduleSync() { if (!cloud.user || !cloud.ready) return; setSync('pending'); clearTimeout(cloud.timer); cloud.timer = setTimeout(syncNow, 700); }
+async function syncNow() {
+  if (!cloud.user) return;
+  if (cloud.busy) { cloud.again = true; return; }
+  cloud.busy = true; setSync('saving');
+  try {
+    const rows = stateToRows(S, cloud.user.id), now = snapshotOf(rows);
+    // 1) add / change, parents first
+    for (const [t, key, conflict] of DB_TABLES) {
+      const prev = cloud.synced.get(t), changed = rows[t].filter(r => prev.get(key(r)) !== JSON.stringify(r));
+      for (let i = 0; i < changed.length; i += 500) { const { error } = await cloud.sb.from(t).upsert(changed.slice(i, i + 500), { onConflict: conflict }); if (error) throw Object.assign(error, { table: t }); }
+      for (const r of changed) prev.set(key(r), JSON.stringify(r));
+    }
+    // 2) remove what's gone, children first
+    for (const [t, key, , filt] of DB_TABLES.slice().reverse()) {
+      if (!filt) continue;
+      const prev = cloud.synced.get(t), gone = [...prev.keys()].filter(k => !now.get(t).has(k));
+      if (!gone.length) continue;
+      if (t === 'instrument_prices' || t === 'amc_checks') { for (const k of gone) { const { error } = await cloud.sb.from(t).delete().match(filt(JSON.parse(prev.get(k)))); if (error) throw Object.assign(error, { table: t }); prev.delete(k); } }
+      else for (let i = 0; i < gone.length; i += 200) { const ids = gone.slice(i, i + 200); const { error } = await cloud.sb.from(t).delete().in('id', ids); if (error) throw Object.assign(error, { table: t }); ids.forEach(k => prev.delete(k)); }
+    }
+    cloud.retry = 0; setSync('saved');
+  } catch (e) {
+    const msg = (e && (e.message || e.error_description)) || 'network error';
+    setSync('error', msg); console.warn('Sync failed', e);
+    if (!cloud.toasted) { toast('Couldn’t save to the cloud: ' + msg + '. Your change is kept on this page and will be retried.'); cloud.toasted = true; }
+    clearTimeout(cloud.timer); cloud.timer = setTimeout(syncNow, Math.min(60000, 5000 * 2 ** cloud.retry++));
+  } finally {
+    cloud.busy = false;
+    if (cloud.again) { cloud.again = false; syncNow(); }
+  }
+}
+window.addEventListener('beforeunload', e => { if (CLOUD && cloud.user && (cloud.state === 'pending' || cloud.state === 'saving' || cloud.state === 'error')) { e.preventDefault(); e.returnValue = ''; } });
+
+/* ── Header chip: who is signed in + save status ── */
+function paintCloudChip() {
+  const el = document.getElementById('cloudChip'); if (!el) return;
+  el.hidden = !(CLOUD && cloud.user);
+  if (el.hidden) return;
+  const lab = { idle: 'Saved', saved: 'Saved', pending: 'Saving…', saving: 'Saving…', error: 'Not saved — retrying' }[cloud.state] || '';
+  el.querySelector('.cc-dot').className = 'cc-dot ' + cloud.state;
+  el.querySelector('.cc-status').textContent = lab;
+  el.querySelector('.cc-status').title = cloud.err || '';
+  el.querySelector('.cc-who').textContent = cloud.user.email || '';
+}
+
+/* ── Sign-in screens ── */
+function authView(mode, msg) {
+  let v = document.getElementById('authView');
+  if (!v) { v = document.createElement('div'); v.id = 'authView'; document.body.appendChild(v); }
+  document.body.classList.add('auth-on'); v.hidden = false;
+  const head = `<div class="auth-brand"><div class="auth-mark" aria-hidden="true">£₹</div><h1>Financial Investment Personal Dashboard</h1><p>UK Equities · Indian Equities</p></div>`;
+  const note = msg ? `<div class="auth-msg ${msg.ok ? 'ok' : ''}" role="status">${esc(msg.text)}</div>` : '';
+  if (mode === 'loading') v.innerHTML = `<div class="auth-card">${head}<div class="auth-loading"><span class="spin" aria-hidden="true"></span>${esc((msg && msg.text) || 'Loading your portfolio…')}</div></div>`;
+  if (mode === 'signin') v.innerHTML = `<form class="auth-card" id="authForm" novalidate>${head}${note}
+      <label class="f">Email<input class="in" id="authEmail" type="email" autocomplete="username" required></label>
+      <label class="f">Password<input class="in" id="authPw" type="password" autocomplete="current-password" required></label>
+      <button class="btn primary auth-go" type="submit">Sign in</button>
+      <button class="linkbtn small" type="button" id="authForgot">Forgot your password?</button>
+      <p class="small muted auth-foot">Access is by invitation only. Use the link in your invitation email to set your password the first time.</p></form>`;
+  if (mode === 'setpw') v.innerHTML = `<form class="auth-card" id="authForm" novalidate>${head}${note}
+      <h2 class="auth-h">Choose your password</h2><p class="small muted">${esc(cloud.user ? cloud.user.email : '')}</p>
+      <label class="f">New password<input class="in" id="authPw" type="password" autocomplete="new-password" minlength="8" required></label>
+      <label class="f">Type it again<input class="in" id="authPw2" type="password" autocomplete="new-password" minlength="8" required></label>
+      <button class="btn primary auth-go" type="submit">Save password and continue</button></form>`;
+  if (mode === 'forgot') v.innerHTML = `<form class="auth-card" id="authForm" novalidate>${head}${note}
+      <h2 class="auth-h">Reset your password</h2><p class="small muted">We’ll email you a link to choose a new one.</p>
+      <label class="f">Email<input class="in" id="authEmail" type="email" autocomplete="username" required></label>
+      <button class="btn primary auth-go" type="submit">Send reset link</button>
+      <button class="linkbtn small" type="button" id="authBack">Back to sign in</button></form>`;
+  const f = document.getElementById('authForm'); if (!f) return;
+  const busy = on => { const b = f.querySelector('.auth-go'); b.disabled = on; b.classList.toggle('busy', on); };
+  const fail = text => authView(mode, { text });
+  const back = document.getElementById('authBack'); if (back) back.onclick = () => authView('signin');
+  const fg = document.getElementById('authForgot'); if (fg) fg.onclick = () => authView('forgot');
+  setTimeout(() => { const first = f.querySelector('input'); if (first) first.focus(); }, 30);
+  f.addEventListener('submit', async e => {
+    e.preventDefault();
+    if (mode === 'signin') {
+      const email = $id('authEmail').value.trim(), password = $id('authPw').value;
+      if (!email || !password) return fail('Enter your email and password.');
+      busy(true); const { data, error } = await cloud.sb.auth.signInWithPassword({ email, password });
+      if (error) return fail(/invalid/i.test(error.message) ? 'That email and password don’t match. Try again, or reset your password.' : error.message);
+      return startSession(data.session);
+    }
+    if (mode === 'forgot') {
+      const email = $id('authEmail').value.trim(); if (!email) return fail('Enter your email.');
+      busy(true); const { error } = await cloud.sb.auth.resetPasswordForEmail(email, { redirectTo: location.origin + location.pathname });
+      return authView('signin', error ? { text: error.message } : { ok: true, text: 'If that email has an account, a reset link is on its way. Open it on this device.' });
+    }
+    if (mode === 'setpw') {
+      const a = $id('authPw').value, b = $id('authPw2').value;
+      if (a.length < 8) return fail('Use at least 8 characters.');
+      if (a !== b) return fail('The two passwords don’t match.');
+      busy(true); const { error } = await cloud.sb.auth.updateUser({ password: a });
+      if (error) return fail(error.message);
+      toast('Password saved'); const { data } = await cloud.sb.auth.getSession(); return startSession(data.session);
+    }
+  });
+}
+function hideAuth() { const v = document.getElementById('authView'); if (v) v.hidden = true; document.body.classList.remove('auth-on'); }
+
+async function startSession(session) {
+  if (!session) return authView('signin');
+  cloud.user = session.user; cloud.ready = false;
+  authView('loading');
+  try {
+    const rows = await loadCloud();
+    const empty = !rows.accounts.length && !rows.transactions.length && !rows.instruments.length;
+    let local = null; try { const raw = localStorage.getItem(STORE_KEY); local = raw ? JSON.parse(raw) : null; } catch (e) {}
+    let uploaded = null; try { uploaded = localStorage.getItem(STORE_KEY + '.uploaded'); } catch (e) {}
+    UI.offerLocal = empty && !uploaded && local && !local.sample && Array.isArray(local.transactions) && local.transactions.length > 0 ? local.transactions.length : 0;
+    cloud.synced = snapshotOf(Object.fromEntries(DB_TABLES.map(([t]) => [t, []])));
+    if (empty) { S = emptyState(); S.settings = { ...S.settings }; }
+    else { S = rowsToState(rows); cloud.synced = snapshotOf(stateToRows(S, cloud.user.id)); }
+    ensureUuids(S);
+    await loadMarket().catch(() => {});
+    BOOK = buildBook(S, TODAY);
+    cloud.ready = true; hideAuth(); paintCloudChip(); setSync('saved');
+    if (empty) scheduleSync();   // creates the default accounts
+    render();
+    try { if (!localStorage.getItem(TOUR_KEY)) setTimeout(startTour, 700); } catch (e) {}
+  } catch (e) {
+    authView('signin', { text: 'Couldn’t load your data: ' + ((e && e.message) || 'network error') + '. Check your connection and sign in again.' });
+    cloud.user = null;
+  }
+}
+function loadSupabaseLib() {
+  if (window.supabase && window.supabase.createClient) return Promise.resolve();
+  return new Promise((res, rej) => { const sc = document.createElement('script'); sc.src = 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.3/dist/umd/supabase.js'; sc.onload = res; sc.onerror = () => rej(new Error('The sign-in library couldn’t be loaded.')); document.head.appendChild(sc); });
+}
+async function cloudBoot() {
+  const hash = new URLSearchParams(location.hash.replace(/^#/, '')), linkType = hash.get('type'), linkErr = hash.get('error_description');
+  authView('loading', { text: 'Connecting…' });
+  try { await loadSupabaseLib(); } catch (e) { return authView('signin', { text: e.message }); }
+  cloud.sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY, { auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true, flowType: 'implicit', storageKey: 'fipd-auth' } });
+  cloud.sb.auth.onAuthStateChange((ev, session) => {
+    if (ev === 'PASSWORD_RECOVERY') { cloud.user = session && session.user; authView('setpw'); }
+    if (ev === 'SIGNED_OUT') { cloud.user = null; cloud.ready = false; paintCloudChip(); authView('signin'); }
+  });
+  const { data } = await cloud.sb.auth.getSession();
+  if (linkType || linkErr) history.replaceState(null, '', location.pathname + location.search);
+  if (linkErr) return authView('signin', { text: /expired|invalid/i.test(linkErr) ? 'That link has expired or was already used. Ask for a new invitation, or use “Forgot your password?”.' : linkErr.replace(/\+/g, ' ') });
+  if (data.session && (linkType === 'invite' || linkType === 'recovery')) { cloud.user = data.session.user; return authView('setpw'); }
+  if (data.session) return startSession(data.session);
+  authView('signin');
+}
+async function cloudSignOut() {
+  if (cloud.state === 'pending' || cloud.state === 'saving') { clearTimeout(cloud.timer); await syncNow(); }
+  if (cloud.state === 'error' && !confirm('Some changes haven’t been saved yet. Sign out anyway?')) return;
+  await cloud.sb.auth.signOut(); location.reload();
+}
+
+if (CLOUD) cloudBoot();
+else {
+  render();
+  try { if (!localStorage.getItem(TOUR_KEY)) setTimeout(startTour, 700); } catch (e) {}
+}
 </script>
 </body>
 </html>
